@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	ChromeCaps chrome.Capabilities
+	ChromeCaps = new(chrome.Capabilities)
 	cookie     []selenium.Cookie
 )
 
@@ -36,7 +36,7 @@ begin:
 	caps := selenium.Capabilities{
 		"browserName": "chrome",
 	}
-	caps.AddChrome(ChromeCaps)
+	caps.AddChrome(*ChromeCaps)
 	wd, err := selenium.NewRemote(caps, "http://127.0.0.1:9515/wd/hub")
 	if err != nil {
 		panic(err)
@@ -44,7 +44,7 @@ begin:
 	//延迟退出chrome
 	defer wd.Quit()
 
-	status := crawl(wd)
+	status, _ := crawl(wd)
 	if status == "reopen" {
 		service.Stop()
 		wd.Quit()
@@ -56,7 +56,17 @@ begin:
 }
 
 // 返回 regain 为重试
-func crawl(wd selenium.WebDriver) (status string) {
+func crawl(wd selenium.WebDriver) (status string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			errStr := fmt.Sprintf("%v", p)
+			if strings.Contains(errStr, "reopen") {
+				status = "reopen"
+			}
+			logs.Error(err)
+		}
+	}()
+
 	var (
 		first   = true // 是否首次爬
 		maxPage int    // 最大爬行页数
@@ -73,14 +83,13 @@ func crawl(wd selenium.WebDriver) (status string) {
 				urls := `https://www.zhipin.com/c101280600/?query=` + keyword + `&page=` + strconv.Itoa(i)
 				logs.Info("crawl:", urls)
 				//加载网页
-				if err := wd.Get(urls); err != nil {
+				if err = wd.Get(urls); err != nil {
+					// 浏览器没有打开
+					util.NeedThrowErr(err)
+
 					logs.Error(err)
 					//wd.GetCookies()
 
-					// 浏览器没有打开
-					if strings.Contains(err.Error(), "chrome not reachable") {
-						return "reopen"
-					}
 					continue
 				}
 				util.RandSleep(15, 25)
@@ -90,20 +99,27 @@ func crawl(wd selenium.WebDriver) (status string) {
 
 				if checkResult == "loading" {
 					logs.Error("page stop with loading, reopen soon")
-					util.RandSleep(10, 15)
-					return "reopen"
+					time.Sleep(3 * time.Second)
+					panic("reopen")
 				}
 
 				we, err := wd.FindElements(selenium.ByCSSSelector, "span.job-name > a")
 				if err != nil {
-					logs.Error("can't find any jobs in list page", err)
+					util.NeedThrowErr(err)
+					logs.Error("can't find any jobs in Boss list page", err)
 					continue
 				}
 
-				var jobUrls []string // 需要采集的职位页面
+				// 获取 job 列表
+				var jobUrls []string
 				for _, item := range we {
 					title, _ := item.GetAttribute("title")
 					url, _ := item.GetAttribute("href")
+
+					// 排除含有目标关键词的 title
+					if util.ContainAny(title, config.RejectKeywords) {
+						continue
+					}
 
 					// 不爬已经检测过的
 					//if sqlite.SelectUrl(url) {
@@ -111,27 +127,22 @@ func crawl(wd selenium.WebDriver) (status string) {
 					//	continue
 					//}
 
-					// 排除含有目标关键词的 title
-					if util.ContainAny(title, config.RejectKeywords) {
-						sqlite.AddUrl(url) // 排除的标记
-						continue
-					}
-
 					jobUrls = append(jobUrls, url)
 				}
 				logs.Info(fmt.Sprintf("Boss直聘 find %d new matched jobs", len(jobUrls)))
 
 				util.RandSleep(15, 25)
+
+				// 爬取每个招聘的信息
 				for _, url := range jobUrls {
 					// 先爬工作页面
-					logs.Info("Job page crawl:", url)
-					if err := wd.Get(url); err != nil {
+					logs.Info("BossJob page crawl:", url)
+					if err = wd.Get(url); err != nil {
+						// 浏览器没有打开
+						util.NeedThrowErr(err)
+
 						logs.Error(err)
 
-						// 浏览器没有打开
-						if strings.Contains(err.Error(), "chrome not reachable") {
-							return "reopen"
-						}
 						util.RandSleep(10, 15)
 						continue
 					}
@@ -149,18 +160,18 @@ func crawl(wd selenium.WebDriver) (status string) {
 					// 继续爬公司介绍页
 					companyUrl := profile.CompanyUrl
 					logs.Info("Company page crawl:", companyUrl)
-					if err := wd.Get(companyUrl); err != nil {
+					if err = wd.Get(companyUrl); err != nil {
+						// 浏览器没有打开
+						util.NeedThrowErr(err)
+
 						logs.Error(err)
 
-						// 浏览器没有打开
-						if strings.Contains(err.Error(), "chrome not reachable") {
-							return "reopen"
-						}
 						util.RandSleep(10, 15)
 						continue
 					}
 
 					if status, err := extractCompanyInfo(wd, profile); !status {
+						util.NeedThrowErr(err)
 						logs.Error("Extract company info failed: ", err)
 					}
 
@@ -196,8 +207,8 @@ func checkPage(wd selenium.WebDriver) (status string) {
 	return
 }
 
-func initCap(ChromeCaps chrome.Capabilities) {
-	ChromeCaps = chrome.Capabilities{
+func initCap(ChromeCaps *chrome.Capabilities) {
+	*ChromeCaps = chrome.Capabilities{
 		Prefs: map[string]interface{}{ // 禁止加载图片，加快渲染速度
 			"profile.managed_default_content_settings.images": 2,
 		},

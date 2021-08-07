@@ -25,7 +25,7 @@ func GetList(file string) []string {
 // ListDrop 去掉注释和空白的行
 func ListDrop(tmpWords []string) (words []string) {
 	for _, s := range tmpWords {
-		if s == "" || strings.HasPrefix(s,"#") {
+		if s == "" || strings.HasPrefix(s, "#") {
 			continue
 		}
 		words = append(words, s)
@@ -55,14 +55,14 @@ func randSecond(min, max int64) time.Duration {
 		s = max
 		return time.Duration(max) * time.Second
 	}
-	s = rand.Int63n(max-min)+min
+	s = rand.Int63n(max-min) + min
 
 	logs.Info(fmt.Sprintf("wait for %d seconds", s))
 	return time.Duration(s) * time.Second
 }
 
 // RandSleep 随机延迟
-func RandSleep(min, max int64)  {
+func RandSleep(min, max int64) {
 	time.Sleep(randSecond(min, max))
 }
 
@@ -76,4 +76,14 @@ func ShortComName(name string) (shorted string) {
 // 剔除关键词
 func RejectWord(str string, word string) string {
 	return strings.Replace(str, word, "", -1)
+}
+
+// 是否抛出浏览器错误
+func NeedThrowErr(err error) {
+	if err == nil {
+		return
+	}
+	if strings.Contains(err.Error(), "chrome not reachable") {
+		panic("reopen")
+	}
 }
