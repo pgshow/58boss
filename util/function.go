@@ -1,10 +1,13 @@
 package util
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/astaxie/beego/logs"
+	"github.com/dbatbold/beep"
 	"github.com/eddycjy/fake-useragent"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"strings"
 	"time"
@@ -56,6 +59,7 @@ func randSecond(min, max int64) time.Duration {
 		return time.Duration(max) * time.Second
 	}
 	s = rand.Int63n(max-min) + min
+	s = (s * 3) / 4
 
 	logs.Info(fmt.Sprintf("wait for %d seconds", s))
 	return time.Duration(s) * time.Second
@@ -86,4 +90,48 @@ func NeedThrowErr(err error) {
 	if strings.Contains(err.Error(), "chrome not reachable") {
 		panic("reopen")
 	}
+	if strings.Contains(err.Error(), "invalid session id") {
+		panic("reopen")
+	}
+}
+
+// 声音提醒
+func Alert(which string) {
+	var output string
+
+	music := beep.NewMusic(output)
+	volume := 100
+
+	//if len(output) > 0 {
+	//	fmt.Println("Writing WAV to", output)
+	//} else {
+	//	beep.PrintSheet = true
+	//}
+
+	if err := beep.OpenSoundDevice("default"); err != nil {
+		log.Fatal(err)
+	}
+	if err := beep.InitSoundDevice(); err != nil {
+		log.Fatal(err)
+	}
+	defer beep.CloseSoundDevice()
+
+	musicScore := `
+        VP SA8 SR9
+        A9HRDE cc DScszs|DEc DQzDE[|cc DScszs|DEc DQz DE[|vv DSvcsc|DEvs ]v|cc DScszs|VN
+        A3HLDE [n z,    |cHRq HLz, |[n z,    |cHRq HLz,  |sl z,    |]m   pb|z, ]m    |
+        
+        A9HRDE cz [c|ss DSsz]z|DEs] ps|DSsz][ z][p|DEpDQ[ [|VN
+        A3HLDE [n ov|]m [n    |  pb ic|  n,   lHRq|HLnc DQ[|
+    `
+
+	reader := bufio.NewReader(strings.NewReader(musicScore))
+	go music.Play(reader, volume)
+	music.Wait()
+	beep.FlushSoundBuffer()
+}
+
+func LowAndHigh(str string) (low string, high string) {
+	print(str)
+	return
 }

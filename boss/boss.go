@@ -34,7 +34,7 @@ begin:
 	//2.调用浏览器
 	//设置浏览器兼容性，我们设置浏览器名称为chrome
 	caps := selenium.Capabilities{
-		"browserName": "chrome",
+		"browserName": "chrome1",
 	}
 	caps.AddChrome(*ChromeCaps)
 	wd, err := selenium.NewRemote(caps, "http://127.0.0.1:9515/wd/hub")
@@ -44,12 +44,14 @@ begin:
 	//延迟退出chrome
 	defer wd.Quit()
 
-	status, _ := crawl(wd)
+	status, err := crawl(wd)
 	if status == "reopen" {
-		service.Stop()
+		//service.Stop()
 		wd.Quit()
 		goto begin
 	}
+
+	logs.Error("End scrape, some unknown error:", err)
 
 	wg.Done()
 	wd.Quit()
@@ -64,6 +66,9 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				status = "reopen"
 			}
 			logs.Error(err)
+		}
+		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
+			status = "reopen"
 		}
 	}()
 
@@ -81,7 +86,7 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 			}
 			for i := 1; i <= maxPage; i++ {
 				urls := `https://www.zhipin.com/c101280600/?query=` + keyword + `&page=` + strconv.Itoa(i)
-				logs.Info("crawl:", urls)
+				logs.Info("Crawl:", urls)
 				//加载网页
 				if err = wd.Get(urls); err != nil {
 					// 浏览器没有打开
@@ -97,16 +102,10 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				waitCaptcha(wd)
 				checkResult := checkPage(wd) // 检查页面是否正常加载状态
 
-				if checkResult == "loading" {
-					logs.Error("page stop with loading, reopen soon")
-					time.Sleep(3 * time.Second)
-					panic("reopen")
-				}
-
 				we, err := wd.FindElements(selenium.ByCSSSelector, "span.job-name > a")
 				if err != nil {
 					util.NeedThrowErr(err)
-					logs.Error("can't find any jobs in Boss list page", err)
+					logs.Error("Can't find any jobs in Boss list page", err)
 					continue
 				}
 
@@ -122,21 +121,21 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 					}
 
 					// 不爬已经检测过的
-					//if sqlite.SelectUrl(url) {
-					//	logs.Debug("Pass:", url)
-					//	continue
-					//}
+					if sqlite.SelectUrl(url) {
+						logs.Debug("Did lastTime:", url)
+						continue
+					}
 
 					jobUrls = append(jobUrls, url)
 				}
-				logs.Info(fmt.Sprintf("Boss直聘 find %d new matched jobs", len(jobUrls)))
+				logs.Info(fmt.Sprintf("Find %d new matched jobs", len(jobUrls)))
 
 				util.RandSleep(15, 25)
 
 				// 爬取每个招聘的信息
 				for _, url := range jobUrls {
 					// 先爬工作页面
-					logs.Info("BossJob page crawl:", url)
+					logs.Info("Job page crawl:", url)
 					if err = wd.Get(url); err != nil {
 						// 浏览器没有打开
 						util.NeedThrowErr(err)
@@ -201,7 +200,9 @@ func checkPage(wd selenium.WebDriver) (status string) {
 	// 是否卡在验证码
 	loading, _ := wd.FindElement(selenium.ByCSSSelector, "div.boss-loading")
 	if loading != nil {
-		return "loading"
+		logs.Error("Page stop with loading, reopen soon")
+		time.Sleep(3 * time.Second)
+		panic("reopen")
 	}
 
 	return
@@ -210,7 +211,7 @@ func checkPage(wd selenium.WebDriver) (status string) {
 func initCap(ChromeCaps *chrome.Capabilities) {
 	*ChromeCaps = chrome.Capabilities{
 		Prefs: map[string]interface{}{ // 禁止加载图片，加快渲染速度
-			"profile.managed_default_content_settings.images": 2,
+			"profile.managed_default_content_settings.images": 1,
 		},
 		Path: "",
 		Args: []string{
@@ -243,6 +244,7 @@ func waitCaptcha(wd selenium.WebDriver) {
 		}
 
 		logs.Warning("Needs verify Captcha for BOSS!!!")
+		util.Alert("Boss")
 		util.RandSleep(10, 15)
 	}
 
@@ -252,6 +254,7 @@ func waitCaptcha(wd selenium.WebDriver) {
 func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bool, err error) {
 	tmpPrimary, err := wd.FindElement(selenium.ByCSSSelector, "div[class='job-primary detail-box']")
 	if err != nil {
+		util.NeedThrowErr(err)
 		return false, err
 	}
 
@@ -343,8 +346,6 @@ func extractCompanyInfo(wd selenium.WebDriver, profile *util.JobProfile) (succes
 	if err != nil {
 		return false, err
 	}
-
-	println(wd.PageSource())
 
 	// 经营范围
 	fileds, _ := tmpPrimary.FindElements(selenium.ByCSSSelector, "li")
