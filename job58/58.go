@@ -85,11 +85,15 @@ func initCap(ChromeCaps *chrome.Capabilities) {
 // 返回 reopen 为重试
 func crawl(wd selenium.WebDriver) (status string, err error) {
 	defer func() {
+		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
+			status = "reopen"
+		}
 		if p := recover(); p != nil {
 			errStr := fmt.Sprintf("%v", p)
 			if strings.Contains(errStr, "reopen") {
 				status = "reopen"
 			}
+			logs.Error(errStr)
 			logs.Error(err)
 		}
 		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {

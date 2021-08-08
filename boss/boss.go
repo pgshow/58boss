@@ -60,15 +60,16 @@ begin:
 // 返回 regain 为重试
 func crawl(wd selenium.WebDriver) (status string, err error) {
 	defer func() {
+		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
+			status = "reopen"
+		}
 		if p := recover(); p != nil {
 			errStr := fmt.Sprintf("%v", p)
 			if strings.Contains(errStr, "reopen") {
 				status = "reopen"
 			}
+			logs.Error(errStr)
 			logs.Error(err)
-		}
-		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
-			status = "reopen"
 		}
 	}()
 
@@ -145,6 +146,10 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						util.RandSleep(10, 15)
 						continue
 					}
+					logs.Error("one")
+					if url == "https://www.zhipin.com/job_detail/2da04ac9efebf4301nV60ty1E1tS.html" {
+						print("it him")
+					}
 
 					var profile = new(util.JobProfile)
 
@@ -153,6 +158,7 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						util.RandSleep(15, 25)
 						continue
 					}
+					logs.Error("two")
 
 					util.RandSleep(15, 25)
 
@@ -313,12 +319,12 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	}
 
 	// 工商信息
-	comInc, _ := wd.FindElement(selenium.ByCSSSelector, "div.detail-content")
+	comInc, err := wd.FindElement(selenium.ByCSSSelector, "div.detail-content")
 	fullNameTmp, _ := comInc.FindElement(selenium.ByCSSSelector, "div.name")
 	profile.ChineseName, _ = fullNameTmp.Text() // 全称
 
 	comIncs, _ := comInc.FindElements(selenium.ByCSSSelector, "div.level-list > li")
-	if len(comIncs) == 5 {
+	if comIncs != nil && len(comIncs) == 5 {
 		profile.LegalEntity, _ = comIncs[0].Text() // 法人
 		profile.LegalEntity = util.RejectWord(profile.LegalEntity, "法定代表人：")
 
@@ -349,7 +355,7 @@ func extractCompanyInfo(wd selenium.WebDriver, profile *util.JobProfile) (succes
 
 	// 经营范围
 	fileds, _ := tmpPrimary.FindElements(selenium.ByCSSSelector, "li")
-	if len(fileds) == 8 {
+	if fileds != nil && len(fileds) == 8 {
 		profile.OperatingItems, _ = fileds[7].GetAttribute("innerHTML")
 		profile.OperatingItems = util.RejectWord(profile.OperatingItems, "<span class=\"t\">经营范围：</span>")
 	}
