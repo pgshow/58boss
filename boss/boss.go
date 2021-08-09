@@ -20,6 +20,8 @@ var (
 )
 
 func Run(wg *sync.WaitGroup) {
+	var first = true // 是否首次爬
+
 begin:
 	initCap(ChromeCaps)
 
@@ -44,7 +46,7 @@ begin:
 	//延迟退出chrome
 	defer wd.Quit()
 
-	status, err := crawl(wd)
+	status, err := crawl(wd, &first)
 	if status == "reopen" {
 		//service.Stop()
 		wd.Quit()
@@ -58,7 +60,7 @@ begin:
 }
 
 // 返回 regain 为重试
-func crawl(wd selenium.WebDriver) (status string, err error) {
+func crawl(wd selenium.WebDriver, first *bool) (status string, err error) {
 	defer func() {
 		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
 			status = "reopen"
@@ -74,13 +76,13 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 	}()
 
 	var (
-		first   = true // 是否首次爬
-		maxPage int    // 最大爬行页数
+		maxPage     int // 最大爬行页数
+		ScrapeTimes = 0 // Cookie/IP爬行量
 	)
 	for {
 		// 从关键词开始遍历，如果是第一次访问访问的页数会多点
 		for _, keyword := range config.SearKeywords {
-			if first {
+			if *first {
 				maxPage = 10
 			} else {
 				maxPage = 2
@@ -100,10 +102,10 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				}
 				util.RandSleep(15, 25)
 
-				waitCaptcha(wd)
-				checkResult := checkPage(wd) // 检查页面是否正常加载状态
+				lastPageTag := checkPage(wd, &ScrapeTimes) // 检查页面是否正常加载状态
 
-				we, err := wd.FindElements(selenium.ByCSSSelector, "span.job-name > a")
+				//we, err := wd.FindElements(selenium.ByCSSSelector, "span.job-name > a")
+				we, err := wd.FindElements(selenium.ByCSSSelector, "div.info-primary")
 				if err != nil {
 					util.NeedThrowErr(err)
 					logs.Error("Can't find any jobs in Boss list page", err)
@@ -113,8 +115,16 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				// 获取 job 列表
 				var jobUrls []string
 				for _, item := range we {
-					title, _ := item.GetAttribute("title")
-					url, _ := item.GetAttribute("href")
+					// 公司规模判断
+					staffNumTmp, _ := item.FindElement(selenium.ByCSSSelector, "div.info-company > div > p")
+					staffNum, _ := staffNumTmp.Text()
+					if util.IsOverStaff(staffNum) {
+						continue
+					}
+
+					titleTmp, _ := item.FindElement(selenium.ByCSSSelector, "span.job-name > a")
+					title, _ := titleTmp.GetAttribute("title")
+					url, _ := titleTmp.GetAttribute("href")
 
 					// 排除含有目标关键词的 title
 					if util.ContainAny(title, config.RejectKeywords) {
@@ -146,10 +156,12 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						util.RandSleep(10, 15)
 						continue
 					}
-					logs.Error("one")
-					if url == "https://www.zhipin.com/job_detail/2da04ac9efebf4301nV60ty1E1tS.html" {
-						print("it him")
-					}
+
+					checkPage(wd, &ScrapeTimes)
+					//logs.Error("one")
+					//if url == "https://www.zhipin.com/job_detail/2da04ac9efebf4301nV60ty1E1tS.html" {
+					//	print("it him")
+					//}
 
 					var profile = new(util.JobProfile)
 
@@ -158,7 +170,14 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						util.RandSleep(15, 25)
 						continue
 					}
-					logs.Error("two")
+
+					//logs.Error("two")
+
+					if util.DropWithCondition(profile) {
+						// 过滤客户不要的数据
+						util.RandSleep(15, 25)
+						continue
+					}
 
 					util.RandSleep(15, 25)
 
@@ -175,6 +194,8 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						continue
 					}
 
+					checkPage(wd, &ScrapeTimes)
+
 					if status, err := extractCompanyInfo(wd, profile); !status {
 						util.NeedThrowErr(err)
 						logs.Error("Extract company info failed: ", err)
@@ -186,30 +207,39 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				}
 
 				// 到达最后一页
-				if checkResult == "lastPage" {
+				if lastPageTag == "lastPage" {
 					break
 				}
 			}
 		}
-		first = false
+		*first = false
 	}
 }
 
 // 返回空为页面无异常，返回 lastPage 为最后一页
-func checkPage(wd selenium.WebDriver) (status string) {
+func checkPage(wd selenium.WebDriver, ScrapeTimes *int) (status string) {
 	// 是否最后一页
 	lastPage, _ := wd.FindElement(selenium.ByCSSSelector, "a[class='next disabled']")
 	if lastPage != nil {
 		return "lastPage"
 	}
 
-	// 是否卡在验证码
+	// 是否因为 userAgent 卡住
 	loading, _ := wd.FindElement(selenium.ByCSSSelector, "div.boss-loading")
 	if loading != nil {
 		logs.Error("Page stop with loading, reopen soon")
 		time.Sleep(3 * time.Second)
 		panic("reopen")
 	}
+
+	// 是否出现验证码
+	waitCaptcha(wd)
+
+	// IP 被封
+	ipBlocked(wd)
+
+	// 爬取暂停
+	ScrapedPause(ScrapeTimes)
 
 	return
 }
@@ -222,7 +252,7 @@ func initCap(ChromeCaps *chrome.Capabilities) {
 		Path: "",
 		Args: []string{
 			//"--headless",
-			//"--start-maximized",
+			"--start-maximized",
 			"--no-sandbox",
 			"--user-agent=" + util.GetRandomUA(),
 			"--disable-gpu",
@@ -256,8 +286,31 @@ func waitCaptcha(wd selenium.WebDriver) {
 
 }
 
+func ipBlocked(wd selenium.WebDriver) {
+	for {
+		html, err := wd.PageSource()
+		if err != nil {
+			return
+		}
+
+		if !strings.Contains(html, "当前IP存在多次违规访问行为") {
+			break
+		}
+
+		logs.Warning("IP has been blocked!!!")
+		util.Alert("Boss")
+		util.RandSleep(100, 160)
+	}
+
+}
+
 // 获取job的信息
 func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bool, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+		}
+	}()
+
 	tmpPrimary, err := wd.FindElement(selenium.ByCSSSelector, "div[class='job-primary detail-box']")
 	if err != nil {
 		util.NeedThrowErr(err)
@@ -269,9 +322,10 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	titleTmp, _ := tmpPrimary.FindElement(selenium.ByCSSSelector, "h1")
 	profile.JobTitle, _ = titleTmp.Text()
 
-	// salary
+	// 工资
 	salaryTmp, _ := tmpPrimary.FindElement(selenium.ByCSSSelector, "span.salary")
 	profile.SalaryLimit, _ = salaryTmp.Text()
+	profile.MinSalary, profile.MaxSalary = util.MinAndMax(profile.SalaryLimit)
 
 	// 经验 学历
 	expTmp, _ := tmpPrimary.FindElement(selenium.ByCSSSelector, "div.info-primary > p")
@@ -292,12 +346,12 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	positionHtml, _ := positionTmp.GetAttribute("innerHTML")
 	positions := strings.Split(positionHtml, "<em class=\"vdot\">·</em>") // 联系人职位
 
-	if len(exps) == 3 {
+	if len(positions) == 2 {
 		profile.ContactPosition = strings.TrimSpace(positions[0])
 	}
 
 	// 招人数
-	profile.HireNumber = "unknown"
+	profile.HireNumber = "-"
 
 	// 时间
 	profile.PostDate = time.Now().Format("2006-01-02")
@@ -319,11 +373,12 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	}
 
 	// 工商信息
-	comInc, err := wd.FindElement(selenium.ByCSSSelector, "div.detail-content")
-	fullNameTmp, _ := comInc.FindElement(selenium.ByCSSSelector, "div.name")
+	comIncTmp, err := wd.FindElement(selenium.ByCSSSelector, "div.detail-content")
+
+	fullNameTmp, _ := comIncTmp.FindElement(selenium.ByCSSSelector, "div.name")
 	profile.ChineseName, _ = fullNameTmp.Text() // 全称
 
-	comIncs, _ := comInc.FindElements(selenium.ByCSSSelector, "div.level-list > li")
+	comIncs, _ := comIncTmp.FindElements(selenium.ByCSSSelector, "div.level-list > li")
 	if comIncs != nil && len(comIncs) == 5 {
 		profile.LegalEntity, _ = comIncs[0].Text() // 法人
 		profile.LegalEntity = util.RejectWord(profile.LegalEntity, "法定代表人：")
@@ -336,11 +391,11 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	}
 
 	// 公司page页
-	companyUrlTmp, _ := comInc.FindElement(selenium.ByCSSSelector, "a[ka='job-cominfo']")
+	companyUrlTmp, _ := comIncTmp.FindElement(selenium.ByCSSSelector, "a[ka='job-cominfo']")
 	profile.CompanyUrl, _ = companyUrlTmp.GetAttribute("href")
 
 	// 地址
-	locationTmp, _ := comInc.FindElement(selenium.ByCSSSelector, "div.location-address")
+	locationTmp, _ := comIncTmp.FindElement(selenium.ByCSSSelector, "div.location-address")
 	profile.Location, _ = locationTmp.Text()
 
 	return true, err
@@ -361,4 +416,25 @@ func extractCompanyInfo(wd selenium.WebDriver, profile *util.JobProfile) (succes
 	}
 
 	return true, err
+}
+
+// cookie/ip 爬取量到达一定时暂停一会
+func ScrapedPause(total *int) {
+	var (
+		pause   = 20
+		restart = 60
+	)
+
+	*total += 1
+
+	logs.Debug("Scrape time", *total)
+
+	if *total%restart == 0 {
+		// 重启
+		util.RandSleepMsg(500, 1000, "Boss Reach the max scrape this time, restart after a long pause", 5)
+		panic("reopen")
+	} else if *total%pause == 0 {
+		// 短暂休息
+		util.RandSleepMsg(180, 360, "Boss Reach the short scrape time, pause for a while", 5)
+	}
 }

@@ -21,6 +21,7 @@ var (
 )
 
 func Run(wg *sync.WaitGroup) {
+	var first = true
 begin:
 	initCap(ChromeCaps)
 
@@ -45,7 +46,7 @@ begin:
 	//延迟退出chrome
 	defer wd.Quit()
 
-	status, err := crawl(wd)
+	status, err := crawl(wd, &first)
 	if status == "reopen" {
 		//service.Stop()
 		wd.Quit()
@@ -76,14 +77,14 @@ func initCap(ChromeCaps *chrome.Capabilities) {
 			"--disable-accelerated-jpeg-decoding",
 			"--test-type=ui",
 			"--ignore-certificate-errors",
-			"--proxy-server=http://127.0.0.1:8080",
+			//"--proxy-server=http://127.0.0.1:8080",
 			"--incognito",
 		},
 	}
 }
 
 // 返回 reopen 为重试
-func crawl(wd selenium.WebDriver) (status string, err error) {
+func crawl(wd selenium.WebDriver, first *bool) (status string, err error) {
 	defer func() {
 		if err != nil && strings.Contains(err.Error(), "chrome not reachable") {
 			status = "reopen"
@@ -102,8 +103,8 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 	}()
 
 	var (
-		first   = true // 是否首次爬
-		maxPage int    // 最大爬行页数
+		maxPage     int // 最大爬行页数
+		ScrapeTimes = 0 // Cookie/IP爬行量
 	)
 	for {
 		// 从关键词开始遍历，如果是第一次访问访问的页数会多点
@@ -112,7 +113,7 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				panic("reopen") // 打开招聘页时遇到任何错误都重开窗口重试
 			}
 
-			if first {
+			if *first {
 				maxPage = 20
 			} else {
 				maxPage = 5
@@ -129,8 +130,7 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 
 				util.RandSleep(15, 25)
 
-				waitCaptcha(wd)
-				checkResult := checkPage(wd) // 检查页面是否正常加载状态
+				lastPageTag := checkPage(wd, &ScrapeTimes) // 设置最后一页检测
 
 				ls, err := wd.FindElements(selenium.ByCSSSelector, "li[class='job_item clearfix']")
 				if err != nil {
@@ -183,9 +183,9 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 					if title == "外贸业务员" {
 						print("now")
 					}
-					url, _ := jobObj.GetAttribute("href")
-					logs.Info("Job page crawl:", url)
-					//logs.Info("58Job page crawl:", title, getJobID(jobObj))
+					//url, _ := jobObj.GetAttribute("href")
+					//logs.Info("Job page crawl:", url)
+					logs.Info("58Job page crawl:", title, getJobID(jobObj))
 					time.Sleep(time.Second)
 
 					// 打开对应工作页
@@ -202,13 +202,18 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 					}
 
 					util.RandSleep(15, 25)
-					checkPage(wd)
+					checkPage(wd, &ScrapeTimes)
 
 					var profile = new(util.JobProfile)
 
 					// 提取工作信息
 					if status, err := extractJobInfo(wd, profile); !status {
 						logs.Error("Extract job profile failed: ", err)
+						goto jobScrapeOver
+					}
+
+					if util.DropWithCondition(profile) {
+						// 过滤客户不要的数据
 						goto jobScrapeOver
 					}
 
@@ -219,7 +224,7 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 						goto jobScrapeOver
 					}
 
-					checkPage(wd)
+					checkPage(wd, &ScrapeTimes)
 
 					if status, err := extractCompanyInfo(wd, profile); !status {
 						logs.Error("Extract company info failed: ", err)
@@ -242,13 +247,13 @@ func crawl(wd selenium.WebDriver) (status string, err error) {
 				}
 
 				// 到达最后一页
-				if checkResult == "lastPage" {
+				if lastPageTag == "lastPage" {
 					break
 				}
 			}
 
 		}
-		first = false
+		*first = false
 	}
 }
 
@@ -287,7 +292,7 @@ func waitCaptcha(wd selenium.WebDriver) {
 }
 
 // 返回空为页面无异常，返回 lastPage 为最后一页
-func checkPage(wd selenium.WebDriver) (status string) {
+func checkPage(wd selenium.WebDriver, ScrapeTimes *int) (status string) {
 	// 是否最后一页
 	lastPage, _ := wd.FindElement(selenium.ByCSSSelector, "a[class='next disabled']")
 	if lastPage != nil {
@@ -303,6 +308,12 @@ func checkPage(wd selenium.WebDriver) (status string) {
 			return "err502"
 		}
 	}
+
+	// 验证码
+	waitCaptcha(wd)
+
+	// 爬取暂停
+	ScrapedPause(ScrapeTimes)
 
 	return
 }
@@ -426,6 +437,8 @@ func extractJobInfo(wd selenium.WebDriver, profile *util.JobProfile) (success bo
 	// 工资
 	salaryTmp, _ := tmpPrimary.FindElement(selenium.ByCSSSelector, "span.pos_salary")
 	profile.SalaryLimit, _ = salaryTmp.Text()
+	profile.SalaryLimit, _ = salaryTmp.Text()
+	profile.MinSalary, profile.MaxSalary = util.MinAndMax(profile.SalaryLimit)
 
 	// 公司主页, 行业, 规模
 	comTmp, _ := wd.FindElement(selenium.ByCSSSelector, "div[class='subitem_con company_baseInfo']")
@@ -462,7 +475,7 @@ func extractCompanyInfo(wd selenium.WebDriver, profile *util.JobProfile) (succes
 		// 公司简称
 		if tmp := regexp.MustCompile(`aliasName":"(.+?)"`).FindStringSubmatch(jsonCode); tmp != nil {
 			if !strings.Contains(tmp[1], "\",") {
-				profile.CompanyShort = tmp[1]
+				profile.CompanyShort = util.ShortComName(tmp[1])
 			}
 		}
 
@@ -546,5 +559,25 @@ func backListPage(listHandler string, wd selenium.WebDriver) {
 	if err != nil {
 		logs.Error("Switch page to list page failed")
 		panic("reopen")
+	}
+}
+
+// cookie/ip 爬取量到达一定时暂停一会
+func ScrapedPause(total *int) {
+	var (
+		pause   = 20
+		restart = 50
+	)
+
+	*total += 1
+
+	logs.Debug("Scrape time", *total)
+
+	if *total%restart == 0 {
+		// 长休息
+		util.RandSleepMsg(360, 600, "58 Reach the max scrape this time, restart after a long pause", 5)
+	} else if *total%pause == 0 {
+		// 短暂休息
+		util.RandSleepMsg(120, 300, "58 Reach the short scrape time, pause for a while", 5)
 	}
 }

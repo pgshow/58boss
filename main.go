@@ -8,6 +8,7 @@ import (
 	"58boss/sqlite"
 	"github.com/astaxie/beego/logs"
 	"sync"
+	"time"
 )
 
 var wg sync.WaitGroup
@@ -19,6 +20,9 @@ func main() {
 
 	initial.Init()
 	sqlite.DbInit()
+
+	logs.Info("Ready to open browsers")
+	time.Sleep(5 * time.Second)
 
 	wg.Add(1)
 	go boss.Run(&wg)

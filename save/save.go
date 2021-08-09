@@ -69,7 +69,11 @@ func createNew(path string) {
 }
 
 // 追加数据
-func add(item *util.JobProfile, path string)  {
+func add(item *util.JobProfile, path string) {
+	if !reflect.ValueOf(item).IsValid() {
+		return
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		log.Fatalf("can not open file %s, err is %+v", path, err)
