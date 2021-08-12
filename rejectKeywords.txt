@@ -1,4 +1,2 @@
 # The line with # prefix is only for explanation
 #培训机构
-学习
-包吃包住

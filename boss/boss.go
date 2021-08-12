@@ -39,6 +39,19 @@ begin:
 		"browserName": "chrome1",
 	}
 	caps.AddChrome(*ChromeCaps)
+	//selenium.Proxy{
+	//	Type: "manual",
+	//	HTTP: "http://" + (streamproxysorted[2] + ":" + streamproxysorted[3] + "@" + streamproxysorted[0] + ":" + streamproxysorted[1]),
+	//	//HTTPPort: httpport,
+	//}
+	//caps.AddProxy(
+	//	selenium.Proxy{
+	//	Type:          selenium.Manual,
+	//	SOCKS:         "http://127.0.0.1:19008",
+	//	SOCKSVersion:  5,
+	//	SOCKSUsername: "doge",
+	//	SOCKSPassword: "doge",
+	//})
 	wd, err := selenium.NewRemote(caps, "http://127.0.0.1:9515/wd/hub")
 	if err != nil {
 		panic(err)
@@ -263,6 +276,7 @@ func initCap(ChromeCaps *chrome.Capabilities) {
 			"--test-type=ui",
 			"--ignore-certificate-errors",
 			"--incognito",
+			//"--proxy-server=http://doge:doge@127.0.0.1:19004",
 		},
 	}
 }
@@ -421,20 +435,23 @@ func extractCompanyInfo(wd selenium.WebDriver, profile *util.JobProfile) (succes
 // cookie/ip 爬取量到达一定时暂停一会
 func ScrapedPause(total *int) {
 	var (
-		pause   = 20
-		restart = 60
+		pause     = 20
+		longPause = 50
+		restart   = 100
 	)
 
 	*total += 1
 
 	logs.Debug("Scrape time", *total)
-
 	if *total%restart == 0 {
 		// 重启
-		util.RandSleepMsg(500, 1000, "Boss Reach the max scrape this time, restart after a long pause", 5)
+		util.RandSleepMsg(500, 1000, "Boss Reach the max scrape this time, restart after a long pause", 8)
 		panic("reopen")
+	} else if *total%longPause == 0 {
+		// 长休息
+		util.RandSleepMsg(360, 500, "Boss Reach the short scrape time, pause for a while", 10)
 	} else if *total%pause == 0 {
 		// 短暂休息
-		util.RandSleepMsg(180, 360, "Boss Reach the short scrape time, pause for a while", 5)
+		util.RandSleepMsg(180, 360, "Boss Reach the short scrape time, pause for a while", 10)
 	}
 }

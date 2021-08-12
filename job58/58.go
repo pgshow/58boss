@@ -575,9 +575,9 @@ func ScrapedPause(total *int) {
 
 	if *total%restart == 0 {
 		// 长休息
-		util.RandSleepMsg(360, 600, "58 Reach the max scrape this time, restart after a long pause", 5)
+		util.RandSleepMsg(250, 500, "58 Reach the max scrape this time, restart after a long pause", 10)
 	} else if *total%pause == 0 {
 		// 短暂休息
-		util.RandSleepMsg(120, 300, "58 Reach the short scrape time, pause for a while", 5)
+		util.RandSleepMsg(100, 240, "58 Reach the short scrape time, pause for a while", 10)
 	}
 }
